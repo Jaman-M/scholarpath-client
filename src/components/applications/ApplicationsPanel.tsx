@@ -1,40 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-import { sampleApplications } from "@/src/data/sampleApplications";
+import ApplicationFormModal from "@/src/components/applications/ApplicationFormModal";
 import type { Application } from "@/src/types/application";
 
-// Each application status has a separate visual style.
-const statusStyles: Record<Application["status"], string> = {
-  Researching: "bg-slate-100 text-slate-700",
-  Preparing: "bg-amber-100 text-amber-800",
-  Submitted: "bg-blue-100 text-blue-800",
-  Interview: "bg-purple-100 text-purple-800",
-  Offer: "bg-emerald-100 text-emerald-800",
-  Rejected: "bg-red-100 text-red-800",
-};
-
-// Format a YYYY-MM-DD date into a readable format.
-function formatDate(deadline: string | null) {
-  if (!deadline) {
-    return "Not set";
-  }
-
-  return new Intl.DateTimeFormat("en", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(`${deadline}T00:00:00`));
+interface ApplicationsPanelProps {
+  applications: Application[];
+  onUpdateApplication: (application: Application) => void;
+  onDeleteApplication: (applicationId: string) => void;
 }
 
-// Calculate how much time remains before a deadline.
-function getDeadlineInformation(deadline: string | null) {
+function getDaysRemaining(deadline: string | null) {
   if (!deadline) {
-    return {
-      label: "Date needed",
-      className: "bg-slate-100 text-slate-600",
-    };
+    return null;
   }
 
   const today = new Date();
@@ -43,138 +22,204 @@ function getDeadlineInformation(deadline: string | null) {
   const deadlineDate = new Date(`${deadline}T00:00:00`);
   const millisecondsPerDay = 1000 * 60 * 60 * 24;
 
-  const daysRemaining = Math.ceil(
+  return Math.ceil(
     (deadlineDate.getTime() - today.getTime()) / millisecondsPerDay,
   );
+}
+
+function formatDeadline(deadline: string | null) {
+  if (!deadline) {
+    return "Not set";
+  }
+
+  return new Date(`${deadline}T00:00:00`).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getDeadlineMessage(deadline: string | null) {
+  const daysRemaining = getDaysRemaining(deadline);
+
+  if (daysRemaining === null) {
+    return "No deadline";
+  }
 
   if (daysRemaining < 0) {
-    return {
-      label: `${Math.abs(daysRemaining)} days overdue`,
-      className: "bg-red-100 text-red-700",
-    };
+    return "Deadline passed";
   }
 
   if (daysRemaining === 0) {
-    return {
-      label: "Due today",
-      className: "bg-red-100 text-red-700",
-    };
+    return "Due today";
+  }
+
+  if (daysRemaining === 1) {
+    return "1 day left";
+  }
+
+  return `${daysRemaining} days left`;
+}
+
+function getDeadlineColor(deadline: string | null) {
+  const daysRemaining = getDaysRemaining(deadline);
+
+  if (daysRemaining === null) {
+    return "bg-slate-100 text-slate-600";
+  }
+
+  if (daysRemaining < 0) {
+    return "bg-red-100 text-red-700";
   }
 
   if (daysRemaining <= 7) {
-    return {
-      label: `${daysRemaining} days left`,
-      className: "bg-orange-100 text-orange-700",
-    };
+    return "bg-orange-100 text-orange-700";
   }
 
   if (daysRemaining <= 30) {
-    return {
-      label: `${daysRemaining} days left`,
-      className: "bg-amber-100 text-amber-800",
-    };
+    return "bg-amber-100 text-amber-700";
   }
 
-  return {
-    label: `${daysRemaining} days left`,
-    className: "bg-emerald-100 text-emerald-700",
-  };
+  return "bg-green-100 text-green-700";
 }
 
-export default function ApplicationsPanel() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [countryFilter, setCountryFilter] = useState("All countries");
-  const [statusFilter, setStatusFilter] = useState("All statuses");
-  const [priorityFilter, setPriorityFilter] = useState("All priorities");
+function getStatusColor(status: Application["status"]) {
+  const colors = {
+    Researching: "bg-slate-100 text-slate-700",
+    Preparing: "bg-amber-100 text-amber-700",
+    Submitted: "bg-blue-100 text-blue-700",
+    Interview: "bg-purple-100 text-purple-700",
+    Offer: "bg-green-100 text-green-700",
+    Rejected: "bg-red-100 text-red-700",
+  };
 
-  const countries = Array.from(
-    new Set(
-      sampleApplications.map((application) => application.country),
-    ),
-  ).sort();
+  return colors[status];
+}
 
-  // Apply every selected filter to the sample application list.
-  const filteredApplications = sampleApplications.filter((application) => {
-    const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+function getPriorityColor(priority: Application["priority"]) {
+  const colors = {
+    High: "bg-red-100 text-red-700",
+    Medium: "bg-amber-100 text-amber-700",
+    Low: "bg-green-100 text-green-700",
+  };
 
-    const searchableText = [
-      application.university,
-      application.program,
-      application.scholarship,
-      application.country,
-      application.supervisor,
-    ]
-      .join(" ")
-      .toLowerCase();
+  return colors[priority];
+}
 
-    const matchesSearch =
-      normalizedSearchQuery === "" ||
-      searchableText.includes(normalizedSearchQuery);
+export default function ApplicationsPanel({
+  applications,
+  onUpdateApplication,
+  onDeleteApplication,
+}: ApplicationsPanelProps) {
+  const [searchText, setSearchText] = useState("");
+  const [selectedCountry, setSelectedCountry] = useState("All");
+  const [selectedStatus, setSelectedStatus] = useState("All");
+  const [selectedPriority, setSelectedPriority] = useState("All");
+  const [editingApplication, setEditingApplication] =
+    useState<Application | null>(null);
 
-    const matchesCountry =
-      countryFilter === "All countries" ||
-      application.country === countryFilter;
+  const countries = useMemo(() => {
+    return Array.from(
+      new Set(applications.map((application) => application.country)),
+    ).sort();
+  }, [applications]);
 
-    const matchesStatus =
-      statusFilter === "All statuses" ||
-      application.status === statusFilter;
+  const filteredApplications = useMemo(() => {
+    const normalizedSearch = searchText.toLowerCase().trim();
 
-    const matchesPriority =
-      priorityFilter === "All priorities" ||
-      application.priority === priorityFilter;
+    return applications.filter((application) => {
+      const searchableText = [
+        application.university,
+        application.country,
+        application.program,
+        application.scholarship,
+        application.supervisor,
+      ]
+        .join(" ")
+        .toLowerCase();
 
-    return (
-      matchesSearch &&
-      matchesCountry &&
-      matchesStatus &&
-      matchesPriority
-    );
-  });
+      const matchesSearch =
+        normalizedSearch === "" ||
+        searchableText.includes(normalizedSearch);
+
+      const matchesCountry =
+        selectedCountry === "All" ||
+        application.country === selectedCountry;
+
+      const matchesStatus =
+        selectedStatus === "All" ||
+        application.status === selectedStatus;
+
+      const matchesPriority =
+        selectedPriority === "All" ||
+        application.priority === selectedPriority;
+
+      return (
+        matchesSearch &&
+        matchesCountry &&
+        matchesStatus &&
+        matchesPriority
+      );
+    });
+  }, [
+    applications,
+    searchText,
+    selectedCountry,
+    selectedStatus,
+    selectedPriority,
+  ]);
 
   function clearFilters() {
-    setSearchQuery("");
-    setCountryFilter("All countries");
-    setStatusFilter("All statuses");
-    setPriorityFilter("All priorities");
+    setSearchText("");
+    setSelectedCountry("All");
+    setSelectedStatus("All");
+    setSelectedPriority("All");
+  }
+
+  function handleDelete(application: Application) {
+    const shouldDelete = window.confirm(
+      `Delete ${application.university} from your tracker?`,
+    );
+
+    if (shouldDelete) {
+      onDeleteApplication(application.id);
+    }
+  }
+
+  function handleUpdate(application: Application) {
+    onUpdateApplication(application);
+    setEditingApplication(null);
   }
 
   return (
-    <section
-      id="applications"
-      className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white"
-    >
-      <div className="border-b border-slate-200 px-6 py-5">
-        <h2 className="text-xl font-semibold text-slate-900">
-          Applications
-        </h2>
+    <>
+      <section
+        id="applications"
+        className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white"
+      >
+        <div className="border-b border-slate-200 px-6 py-5">
+          <h2 className="text-xl font-semibold">Applications</h2>
 
-        <p className="mt-1 text-sm text-slate-500">
-          Search, filter and manage your PhD applications.
-        </p>
-      </div>
+          <p className="mt-1 text-sm text-slate-500">
+            Search, filter and manage your saved applications.
+          </p>
+        </div>
 
-      <div className="grid gap-3 border-b border-slate-200 p-5 md:grid-cols-2 lg:grid-cols-5">
-        <label className="md:col-span-2">
-          <span className="sr-only">Search applications</span>
-
+        <div className="grid gap-3 border-b border-slate-200 p-5 md:grid-cols-2 lg:grid-cols-5">
           <input
             type="search"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search university, program or scholarship"
-            className="h-11 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Search applications..."
+            className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 lg:col-span-2"
           />
-        </label>
-
-        <label>
-          <span className="sr-only">Filter by country</span>
 
           <select
-            value={countryFilter}
-            onChange={(event) => setCountryFilter(event.target.value)}
-            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            value={selectedCountry}
+            onChange={(event) => setSelectedCountry(event.target.value)}
+            className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
           >
-            <option>All countries</option>
+            <option value="All">All countries</option>
 
             {countries.map((country) => (
               <option key={country} value={country}>
@@ -182,164 +227,150 @@ export default function ApplicationsPanel() {
               </option>
             ))}
           </select>
-        </label>
-
-        <label>
-          <span className="sr-only">Filter by status</span>
 
           <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            value={selectedStatus}
+            onChange={(event) => setSelectedStatus(event.target.value)}
+            className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
           >
-            <option>All statuses</option>
-            <option>Researching</option>
-            <option>Preparing</option>
-            <option>Submitted</option>
-            <option>Interview</option>
-            <option>Offer</option>
-            <option>Rejected</option>
+            <option value="All">All statuses</option>
+            <option value="Researching">Researching</option>
+            <option value="Preparing">Preparing</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Interview">Interview</option>
+            <option value="Offer">Offer</option>
+            <option value="Rejected">Rejected</option>
           </select>
-        </label>
-
-        <label>
-          <span className="sr-only">Filter by priority</span>
 
           <select
-            value={priorityFilter}
-            onChange={(event) => setPriorityFilter(event.target.value)}
-            className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            value={selectedPriority}
+            onChange={(event) => setSelectedPriority(event.target.value)}
+            className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500"
           >
-            <option>All priorities</option>
-            <option>High</option>
-            <option>Medium</option>
-            <option>Low</option>
+            <option value="All">All priorities</option>
+            <option value="High">High priority</option>
+            <option value="Medium">Medium priority</option>
+            <option value="Low">Low priority</option>
           </select>
-        </label>
-      </div>
+        </div>
 
-      {filteredApplications.length === 0 ? (
-        <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
-          <div className="rounded-full bg-slate-100 px-4 py-3 text-2xl">
-            🔍
-          </div>
-
-          <h3 className="mt-4 font-semibold text-slate-900">
-            No matching applications
-          </h3>
-
-          <p className="mt-1 max-w-sm text-sm text-slate-500">
-            Try changing your search text or selected filters.
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+          <p className="text-sm text-slate-500">
+            Showing {filteredApplications.length} of{" "}
+            {applications.length} applications
           </p>
 
           <button
             type="button"
             onClick={clearFilters}
-            className="mt-4 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+            className="text-sm font-semibold text-blue-700 hover:underline"
           >
             Clear filters
           </button>
         </div>
-      ) : (
-        <>
-          {/* Desktop application table */}
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[900px] border-collapse text-left">
-              <thead className="bg-slate-50">
-                <tr className="text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-6 py-4 font-semibold">
-                    University and program
-                  </th>
 
-                  <th className="px-6 py-4 font-semibold">
-                    Scholarship
-                  </th>
+        {applications.length === 0 ? (
+          <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
+            <div className="rounded-full bg-slate-100 px-4 py-3 text-2xl">
+              🎓
+            </div>
 
-                  <th className="px-6 py-4 font-semibold">
-                    Deadline
-                  </th>
+            <h3 className="mt-4 font-semibold">No applications yet</h3>
 
-                  <th className="px-6 py-4 font-semibold">
-                    Status
-                  </th>
+            <p className="mt-1 max-w-sm text-sm text-slate-500">
+              Use the Add Application button to add your first university.
+            </p>
+          </div>
+        ) : filteredApplications.length === 0 ? (
+          <div className="flex min-h-60 flex-col items-center justify-center px-6 text-center">
+            <h3 className="font-semibold">No matching application</h3>
 
-                  <th className="px-6 py-4 font-semibold">
-                    Priority
-                  </th>
+            <p className="mt-1 text-sm text-slate-500">
+              Change your search text or clear the filters.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Desktop table */}
+            <div className="hidden overflow-x-auto lg:block">
+              <table className="w-full min-w-[1000px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-6 py-4">University</th>
+                    <th className="px-6 py-4">Program</th>
+                    <th className="px-6 py-4">Deadline</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Priority</th>
+                    <th className="px-6 py-4">Links</th>
+                    <th className="px-6 py-4">Actions</th>
+                  </tr>
+                </thead>
 
-                  <th className="px-6 py-4 font-semibold">
-                    Links
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredApplications.map((application) => {
-                  const deadlineInformation = getDeadlineInformation(
-                    application.deadline,
-                  );
-
-                  return (
-                    <tr
-                      key={application.id}
-                      className="border-t border-slate-200 transition hover:bg-slate-50"
-                    >
-                      <td className="px-6 py-5 align-top">
-                        <p className="font-semibold text-slate-900">
+                <tbody className="divide-y divide-slate-200">
+                  {filteredApplications.map((application) => (
+                    <tr key={application.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-5">
+                        <p className="font-semibold">
                           {application.university}
                         </p>
 
-                        <p className="mt-1 max-w-xs text-sm text-slate-500">
-                          {application.program}
-                        </p>
-
-                        <p className="mt-2 text-xs font-medium text-blue-700">
+                        <p className="mt-1 text-xs text-slate-500">
                           {application.country}
                         </p>
                       </td>
 
-                      <td className="px-6 py-5 align-top">
-                        <p className="max-w-xs text-sm text-slate-600">
-                          {application.scholarship}
-                        </p>
+                      <td className="px-6 py-5">
+                        <p>{application.program || "Not added"}</p>
+
+                        {application.scholarship && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            {application.scholarship}
+                          </p>
+                        )}
                       </td>
 
-                      <td className="px-6 py-5 align-top">
-                        <p className="text-sm font-medium text-slate-800">
-                          {formatDate(application.deadline)}
-                        </p>
+                      <td className="px-6 py-5">
+                        <p>{formatDeadline(application.deadline)}</p>
 
                         <span
-                          className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${deadlineInformation.className}`}
+                          className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getDeadlineColor(
+                            application.deadline,
+                          )}`}
                         >
-                          {deadlineInformation.label}
+                          {getDeadlineMessage(application.deadline)}
                         </span>
                       </td>
 
-                      <td className="px-6 py-5 align-top">
+                      <td className="px-6 py-5">
                         <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[application.status]}`}
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(
+                            application.status,
+                          )}`}
                         >
                           {application.status}
                         </span>
                       </td>
 
-                      <td className="px-6 py-5 align-top">
-                        <span className="text-sm font-medium text-slate-700">
+                      <td className="px-6 py-5">
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityColor(
+                            application.priority,
+                          )}`}
+                        >
                           {application.priority}
                         </span>
                       </td>
 
-                      <td className="px-6 py-5 align-top">
+                      <td className="px-6 py-5">
                         <div className="flex flex-col gap-2">
                           {application.applicationUrl && (
                             <a
                               href={application.applicationUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-sm font-semibold text-blue-700 hover:underline"
+                              className="font-semibold text-blue-700 hover:underline"
                             >
-                              Application ↗
+                              Apply
                             </a>
                           )}
 
@@ -348,114 +379,161 @@ export default function ApplicationsPanel() {
                               href={application.programUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-sm font-semibold text-slate-600 hover:underline"
+                              className="text-slate-600 hover:underline"
                             >
-                              Program ↗
+                              Program
                             </a>
                           )}
+
+                          {!application.applicationUrl &&
+                            !application.programUrl && (
+                              <span className="text-slate-400">No links</span>
+                            )}
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-5">
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditingApplication(application)
+                            }
+                            className="font-semibold text-blue-700 hover:underline"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(application)}
+                            className="font-semibold text-red-600 hover:underline"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-          {/* Mobile application cards */}
-          <div className="grid gap-4 p-4 md:hidden">
-            {filteredApplications.map((application) => {
-              const deadlineInformation = getDeadlineInformation(
-                application.deadline,
-              );
-
-              return (
+            {/* Mobile and tablet cards */}
+            <div className="grid gap-4 p-4 lg:hidden">
+              {filteredApplications.map((application) => (
                 <article
                   key={application.id}
-                  className="rounded-xl border border-slate-200 p-4"
+                  className="rounded-2xl border border-slate-200 p-5"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h3 className="font-semibold text-slate-900">
+                      <h3 className="font-bold">
                         {application.university}
                       </h3>
 
-                      <p className="mt-1 text-xs font-medium text-blue-700">
+                      <p className="mt-1 text-sm text-slate-500">
                         {application.country}
                       </p>
                     </div>
 
                     <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[application.status]}`}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${getPriorityColor(
+                        application.priority,
+                      )}`}
                     >
-                      {application.status}
+                      {application.priority}
                     </span>
                   </div>
 
-                  <p className="mt-3 text-sm text-slate-600">
-                    {application.program}
-                  </p>
-
-                  <div className="mt-4 border-t border-slate-200 pt-4">
-                    <p className="text-xs uppercase tracking-wider text-slate-400">
-                      Scholarship
-                    </p>
-
-                    <p className="mt-1 text-sm text-slate-700">
-                      {application.scholarship}
-                    </p>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between gap-4">
+                  <div className="mt-5 space-y-3 text-sm">
                     <div>
-                      <p className="text-xs text-slate-400">
-                        {formatDate(application.deadline)}
+                      <p className="text-xs text-slate-500">Program</p>
+                      <p className="mt-1">
+                        {application.program || "Not added"}
                       </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-slate-500">Deadline</p>
+                      <p className="mt-1">
+                        {formatDeadline(application.deadline)}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(
+                          application.status,
+                        )}`}
+                      >
+                        {application.status}
+                      </span>
 
                       <span
-                        className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${deadlineInformation.className}`}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${getDeadlineColor(
+                          application.deadline,
+                        )}`}
                       >
-                        {deadlineInformation.label}
+                        {getDeadlineMessage(application.deadline)}
                       </span>
                     </div>
+                  </div>
 
-                    <div className="flex gap-3">
-                      {application.applicationUrl && (
-                        <a
-                          href={application.applicationUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-sm font-semibold text-blue-700"
-                        >
-                          Apply ↗
-                        </a>
-                      )}
+                  <div className="mt-5 flex flex-wrap gap-4 border-t border-slate-200 pt-4 text-sm">
+                    {application.applicationUrl && (
+                      <a
+                        href={application.applicationUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-blue-700"
+                      >
+                        Apply
+                      </a>
+                    )}
 
-                      {application.programUrl && (
-                        <a
-                          href={application.programUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-sm font-semibold text-slate-600"
-                        >
-                          Program ↗
-                        </a>
-                      )}
-                    </div>
+                    {application.programUrl && (
+                      <a
+                        href={application.programUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-slate-600"
+                      >
+                        Program
+                      </a>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingApplication(application)}
+                      className="font-semibold text-blue-700"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(application)}
+                      className="font-semibold text-red-600"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </article>
-              );
-            })}
-          </div>
-        </>
-      )}
+              ))}
+            </div>
+          </>
+        )}
+      </section>
 
-      <div className="border-t border-slate-200 px-6 py-4">
-        <p className="text-xs text-slate-500">
-          Showing {filteredApplications.length} of{" "}
-          {sampleApplications.length} applications
-        </p>
-      </div>
-    </section>
+      {editingApplication && (
+        <ApplicationFormModal
+          key={editingApplication.id}
+          initialApplication={editingApplication}
+          onSave={handleUpdate}
+          onClose={() => setEditingApplication(null)}
+        />
+      )}
+    </>
   );
 }
